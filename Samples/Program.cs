@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO.Ports;
 using System.Net;
 using System.Net.Sockets;
@@ -14,6 +15,7 @@ namespace Samples
     using System.Linq;
     using System.Runtime.CompilerServices;
     using NModbus.Logging;
+    using NModbus.Message;
 
     /// <summary>
     ///     Demonstration of NModbus
@@ -31,16 +33,21 @@ namespace Samples
 
             try
             {
+                ModbusSerialRtuMasterWriteRegisters();
+
                 //ModbusSocketSerialMasterReadRegisters();
                 //ModbusSocketSerialMasterWriteRegisters();
                 //ModbusSocketSerialMasterReadRegisters();
-                await Task.Run(() => { });
-				        //ModbusTcpMasterReadInputs();
-				        //SimplePerfTest();
-				        //ModbusSerialRtuMasterWriteRegisters();
-				        //ModbusSerialAsciiMasterReadRegisters();
-				        //ModbusTcpMasterReadInputs();
-								ModbusTcpMasterReadHoldingRegisters32();
+                await Task.Run(() =>
+                {
+
+                });
+                //ModbusTcpMasterReadInputs();
+                //SimplePerfTest();
+                //ModbusSerialRtuMasterWriteRegisters();
+                //ModbusSerialAsciiMasterReadRegisters();
+                //ModbusTcpMasterReadInputs();
+                // ModbusTcpMasterReadHoldingRegisters32();
                 //StartModbusAsciiSlave();
                 //ModbusTcpMasterReadInputsFromModbusSlave();
                 //ModbusSerialAsciiMasterReadRegistersFromModbusSlave();
@@ -53,7 +60,7 @@ namespace Samples
 
             catch (Exception e)
             {
-                Console.WriteLine(e.Message);
+                Console.WriteLine(e);
             }
 
             Console.WriteLine("Press any key to continue...");
@@ -62,29 +69,80 @@ namespace Samples
             return 0;
         }
 
+        class MySlave : IModbusSlave
+        {
+            IModbusMaster master;
+            public MySlave(IModbusMaster master)
+            {
+                this.master = master;
+            }
+            public byte UnitId => 0;
+
+            public ISlaveDataStore DataStore => throw new NotImplementedException();
+
+            public IModbusMessage ApplyRequest(IModbusMessage request)
+            {
+                switch (request.FunctionCode)
+                {
+                    case ModbusFunctionCodes.ReadHoldingRegisters:
+                    case ModbusFunctionCodes.ReadInputRegisters:
+                        return master.ExecuteCustomMessage<ReadHoldingInputRegistersResponse>(request);
+                    case ModbusFunctionCodes.WriteMultipleRegisters:
+                        return master.ExecuteCustomMessage<WriteMultipleRegistersResponse>(request);
+                    case ModbusFunctionCodes.WriteSingleRegister:
+                        return master.ExecuteCustomMessage<WriteSingleRegisterRequestResponse>(request);
+                    default:
+                        throw new NotImplementedException();
+                }
+            }
+        }
+
         /// <summary>
         ///     Simple Modbus serial RTU master write holding registers example.
         /// </summary>
         public static void ModbusSerialRtuMasterWriteRegisters()
         {
-            using (SerialPort port = new SerialPort(PrimarySerialPortName))
+
+            IPAddress address = new IPAddress(new byte[] { 0, 0, 0, 0 });
+
+            // create and start the TCP slave
+            TcpListener slaveTcpListener = new TcpListener(address, 1503);
+            slaveTcpListener.Start();
+            var factory = new ModbusFactory(logger: new ConsoleModbusLogger(LoggingLevel.Trace));
+
+            IModbusSlaveNetwork network = factory.CreateSlaveNetwork(slaveTcpListener);
+
+            using (SerialPort port = new SerialPort("/dev/serial/by-id/usb-1a86_USB2.0-Ser_-if00-port0"))
             {
-                // configure serial port
                 port.BaudRate = 9600;
                 port.DataBits = 8;
                 port.Parity = Parity.None;
                 port.StopBits = StopBits.One;
+                port.ReadTimeout = 1000;
+                port.WriteTimeout = 1000;
                 port.Open();
 
-                var factory = new ModbusFactory();
                 IModbusMaster master = factory.CreateRtuMaster(port);
+                network.AddSlave(new MySlave(master));
 
-                byte slaveId = 1;
-                ushort startAddress = 100;
-                ushort[] registers = new ushort[] { 1, 2, 3 };
-
-                // write three registers
-                master.WriteMultipleRegisters(slaveId, startAddress, registers);
+                network.ListenAsync().GetAwaiter().GetResult();
+                // var stopwatch = Stopwatch.StartNew();
+                // while (true)
+                // {
+                //     byte slaveId = 0;
+                //     foreach (var pp in new[]{
+                //          (0x24c,"Battery SOC:"),
+                //         (0x24e,"Battery Power:"),
+                //         // (0x28d,"HousePower:"),
+                //         // (0x271,"Grid Power:"),
+                //         // (667,"MicroInverterPower:")
+                //         })
+                //     {
+                //         var result = master.ReadHoldingRegisters(slaveId, (ushort)pp.Item1, 1);
+                //         Console.WriteLine(pp.Item2 + " " + result[0] + " " + stopwatch.Elapsed);
+                //     }
+                //     Thread.Sleep(10_000);
+                // }
             }
         }
         /// <summary>
@@ -219,20 +277,20 @@ namespace Samples
                 IModbusMaster master = factory.CreateMaster(client);
 
 
-								byte slaveId = 1;
-								ushort startAddress = 7165;
+                byte slaveId = 1;
+                ushort startAddress = 7165;
                 ushort numInputs = 5;
-								UInt32 www = 0x42c80083;
+                UInt32 www = 0x42c80083;
 
-								master.WriteSingleRegister32(slaveId, startAddress, www);
-								uint[] registers = master.ReadHoldingRegisters32(slaveId, startAddress, numInputs);
+                master.WriteSingleRegister32(slaveId, startAddress, www);
+                uint[] registers = master.ReadHoldingRegisters32(slaveId, startAddress, numInputs);
 
-				        for (int i = 0; i < numInputs; i++)
-				        {
-									Console.WriteLine($"Input {(startAddress + i)}={registers[i]}");
-				        }
-						}
-				}
+                for (int i = 0; i < numInputs; i++)
+                {
+                    Console.WriteLine($"Input {(startAddress + i)}={registers[i]}");
+                }
+            }
+        }
 
         /// <summary>
         ///     Simple Modbus UDP master write coils example.
@@ -390,7 +448,7 @@ namespace Samples
                 byte registerCountMSB = frameStart[4];
                 byte registerCountLSB = frameStart[5];
 
-                int numberOfRegisters = ( registerCountMSB << 8) + registerCountLSB;
+                int numberOfRegisters = (registerCountMSB << 8) + registerCountLSB;
 
                 Console.WriteLine($"Got Hmi Buffer Request for {numberOfRegisters} registers.");
 
@@ -404,7 +462,7 @@ namespace Samples
         }
 
 
-        
+
         /// <summary>
         /// Simple Modbus serial RTU slave example.
         /// </summary>
@@ -562,11 +620,10 @@ namespace Samples
 
             IModbusSlaveNetwork network = factory.CreateSlaveNetwork(slaveTcpListener);
 
-            IModbusSlave slave1 = factory.CreateSlave(1);
-            IModbusSlave slave2 = factory.CreateSlave(2);
+            IModbusSlave slave1 = factory.CreateSlave(0);
 
             network.AddSlave(slave1);
-            network.AddSlave(slave2);
+
 
             network.ListenAsync().GetAwaiter().GetResult();
 

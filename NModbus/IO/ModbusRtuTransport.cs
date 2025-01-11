@@ -29,7 +29,7 @@ namespace NModbus.IO
             byte functionCode = frameStart[1];
 
             IModbusFunctionService service = ModbusFactory.GetFunctionServiceOrThrow(functionCode);
-                
+
             return service.GetRtuRequestBytesToRead(frameStart);
         }
 
@@ -55,12 +55,12 @@ namespace NModbus.IO
             while (numBytesReadTotal != count)
             {
                 int numBytesRead = StreamResource.Read(frameBytes, numBytesReadTotal, count - numBytesReadTotal);
-                
+
                 if (numBytesRead == 0)
                 {
                     throw new IOException("Read resulted in 0 bytes returned.");
                 }
-                
+
                 numBytesReadTotal += numBytesRead;
             }
 
@@ -96,9 +96,35 @@ namespace NModbus.IO
             return CreateResponse<T>(frame);
         }
 
+        private int GetNumberOfFFsAtBeggining(byte[] bytes)
+        {
+            for (int i = 0; i < bytes.Length; i++)
+            {
+                if (bytes[i] != 0xFF)
+                {
+                    return i;
+                }
+            }
+            return bytes.Length;
+        }
+
         private byte[] ReadResponse()
         {
             byte[] frameStart = Read(ResponseFrameStartLength);
+            var numberOfFFsAtBeggining = GetNumberOfFFsAtBeggining(frameStart);
+            while (numberOfFFsAtBeggining == ResponseFrameStartLength)
+            {
+                frameStart = Read(ResponseFrameStartLength);
+                numberOfFFsAtBeggining = GetNumberOfFFsAtBeggining(frameStart);
+            }
+            if (numberOfFFsAtBeggining > 0)
+            {
+                frameStart = frameStart
+                .Skip(numberOfFFsAtBeggining)
+                .Take(frameStart.Length - numberOfFFsAtBeggining)
+                .Concat(Read(ResponseFrameStartLength - (frameStart.Length - numberOfFFsAtBeggining)))
+                .ToArray();
+            }
             byte[] frameEnd = Read(ResponseBytesToRead(frameStart));
             byte[] frame = frameStart.Concat(frameEnd).ToArray();
 
